@@ -137,7 +137,12 @@ class CustomHTTPBearer(HTTPBearer):
         except jwt.InvalidTokenError:
             raise HTTPException(401, "Invalid Token")
 
+ouath2_scheme = CustomHTTPBearer()
 
+def is_admin(request: Request):
+    user = request.state.user
+    if not user or user["role"] not in (UserRole.admin, UserRole.super_admin):
+        raise HTTPException(403, "You do not have permissions for this resource")
 def create_access_token(user):
     try:
         payload = {"sub": user["id"], "exp": datetime.utcnow() + timedelta(minutes=120)}
@@ -158,6 +163,27 @@ async def shutdown():
     await database.disconnect()
 
 
+@app.get("/clothes", dependencies=[Depends(ouath2_scheme)])
+async def get_all_clothes():
+    return await database.fetch_all(clothes.select())
+
+class ClothesBase(BaseModel):
+    name: str
+    size: SizeEnum
+    color: ColorEnum
+
+class ClothesIn(ClothesBase):
+    pass
+class ClothesOut(ClothesBase):
+    id: int
+    created_at: datetime
+    last_modified_at: datetime
+
+@app.post("/clothes", response_model=ClothesOut, dependencies=[Depends(ouath2_scheme), Depends(is_admin)], status_code=201)
+async def create_clothes(clothes_data: ClothesIn):
+    id_ = await database.execute(clothes.insert().values(**clothes_data.dict()))
+    return await database.fetch_one(clothes.select().where(clothes.c.id == id_))
+
 # @app.post("/register/",  response_model=UserSignOut)
 @app.post("/register/" )
 async def create_user(user: UserSignIn):
@@ -169,3 +195,4 @@ async def create_user(user: UserSignIn):
     token = create_access_token(create_user)
 
     return {"token": token}
+
